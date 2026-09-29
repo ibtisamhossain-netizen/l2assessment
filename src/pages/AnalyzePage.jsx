@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { categorizeMessage } from '../utils/llmHelper'
-import { calculateUrgency } from '../utils/urgencyScorer'
-import { getRecommendedAction } from '../utils/templates'
+import { explainUrgency } from '../utils/urgencyScorer'
+import { getRecommendedAction, shouldEscalate } from '../utils/templates'
+import { validateMessage } from '../utils/triageRules'
 
 function AnalyzePage() {
   const [message, setMessage] = useState('')
   const [results, setResults] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [inputError, setInputError] = useState(null)
 
   useEffect(() => {
     // Check for example message from home page
@@ -19,30 +21,36 @@ function AnalyzePage() {
   }, [])
 
   const handleAnalyze = async () => {
-    if (!message.trim()) {
-      alert('Please enter a message to analyze')
+    const validationError = validateMessage(message)
+    if (validationError) {
+      setInputError(validationError)
       return
     }
+    setInputError(null)
 
     setIsLoading(true)
     setResults(null)
     
     try {
       // Run categorization (LLM call)
-      const { category, reasoning } = await categorizeMessage(message)
+      const { category, reasoning, source } = await categorizeMessage(message)
       
-      // Calculate urgency (rule-based)
-      const urgency = calculateUrgency(message)
+      // Calculate urgency (rule-based, from what the message says)
+      const { level: urgency, reasons: urgencyReasons } = explainUrgency(message, category)
       
-      // Get recommended action (template-based)
-      const recommendedAction = getRecommendedAction(category)
+      // Get recommended action (template-based, depends on category AND urgency)
+      const recommendedAction = getRecommendedAction(category, urgency)
+      const escalate = shouldEscalate(category, urgency)
       
       const analysisResult = {
         message,
         category,
         urgency,
+        urgencyReasons,
+        escalate,
         recommendedAction,
         reasoning,
+        source,
         timestamp: new Date().toISOString()
       }
 
@@ -63,6 +71,7 @@ function AnalyzePage() {
   const handleClear = () => {
     setMessage('')
     setResults(null)
+    setInputError(null)
   }
 
   return (
@@ -89,6 +98,11 @@ function AnalyzePage() {
             <div className="text-sm text-gray-500 mt-1">
               {message.length} characters
             </div>
+            {inputError && (
+              <div className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2" role="alert">
+                {inputError}
+              </div>
+            )}
           </div>
 
           {/* Action Buttons */}
@@ -128,6 +142,12 @@ function AnalyzePage() {
         {results && (
           <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Analysis Results</h2>
+
+            {results.escalate && (
+              <div className="mb-4 bg-red-50 border border-red-300 text-red-900 rounded-lg p-3 font-semibold" role="alert">
+                🚨 Escalate now: high-urgency {results.category.toLowerCase()}.
+              </div>
+            )}
             
             <div className="space-y-4">
               <div>
@@ -146,6 +166,11 @@ function AnalyzePage() {
                 }`}>
                   {results.urgency}
                 </div>
+                {results.urgencyReasons?.length > 0 && (
+                  <div className="text-sm text-gray-600 mt-1">
+                    Why: {results.urgencyReasons.join(', ')}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -156,7 +181,9 @@ function AnalyzePage() {
               </div>
 
               <div>
-                <div className="text-sm font-semibold text-gray-600 mb-1">AI Reasoning</div>
+                <div className="text-sm font-semibold text-gray-600 mb-1">
+                  {results.source === 'ai' ? 'AI Reasoning' : 'Reasoning (keyword rules — AI unavailable)'}
+                </div>
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
                   <div className="prose prose-sm max-w-none text-gray-700">
                     <ReactMarkdown>
