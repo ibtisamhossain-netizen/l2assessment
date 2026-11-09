@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { categorizeMessage } from '../utils/llmHelper'
 import { explainUrgency } from '../utils/urgencyScorer'
-import { getRecommendedAction, shouldEscalate } from '../utils/templates'
-import { validateMessage } from '../utils/triageRules'
+import { getRecommendedAction, getRiskActions, shouldEscalate } from '../utils/templates'
+import { detectRisks, validateMessage } from '../utils/triageRules'
 
 function AnalyzePage() {
   const [message, setMessage] = useState('')
@@ -40,7 +40,10 @@ function AnalyzePage() {
       
       // Get recommended action (template-based, depends on category AND urgency)
       const recommendedAction = getRecommendedAction(category, urgency)
-      const escalate = shouldEscalate(category, urgency)
+      // Risks (data exposure, churn, chargeback/legal, privacy) escalate in any category
+      const risks = detectRisks(message)
+      const riskActions = getRiskActions(risks)
+      const escalate = shouldEscalate(category, urgency, risks)
       
       const analysisResult = {
         message,
@@ -48,6 +51,8 @@ function AnalyzePage() {
         urgency,
         urgencyReasons,
         escalate,
+        risks,
+        riskActions,
         recommendedAction,
         reasoning,
         source,
@@ -145,7 +150,22 @@ function AnalyzePage() {
 
             {results.escalate && (
               <div className="mb-4 bg-red-50 border border-red-300 text-red-900 rounded-lg p-3 font-semibold" role="alert">
-                🚨 Escalate now: high-urgency {results.category.toLowerCase()}.
+                🚨 Escalate now: {results.risks?.length
+                  ? results.risks.join(', ')
+                  : `high-urgency ${results.category.toLowerCase()}`}.
+              </div>
+            )}
+
+            {results.riskActions?.length > 0 && (
+              <div className="mb-4 space-y-2">
+                {results.riskActions.map(r => (
+                  <div key={r.risk} className="border border-red-200 rounded-lg p-3">
+                    <div className="text-sm font-semibold text-red-900">
+                      {r.risk.charAt(0).toUpperCase() + r.risk.slice(1)}: owner {r.owner}
+                    </div>
+                    <p className="text-sm text-gray-800 mt-1">{r.action}</p>
+                  </div>
+                ))}
               </div>
             )}
             
@@ -197,7 +217,8 @@ function AnalyzePage() {
             <div className="mt-6 pt-4 border-t border-gray-200">
               <button
                 onClick={() => {
-                  const text = `Category: ${results.category}\nUrgency: ${results.urgency}\nRecommendation: ${results.recommendedAction}\n\nReasoning: ${results.reasoning}`
+                  const risks = (results.riskActions || []).map(r => `\nRisk: ${r.risk} (owner: ${r.owner}) - ${r.action}`).join('')
+                  const text = `Category: ${results.category}\nUrgency: ${results.urgency}${risks}\nRecommendation: ${results.recommendedAction}\n\nReasoning: ${results.reasoning}`
                   navigator.clipboard.writeText(text)
                   alert('Results copied to clipboard!')
                 }}

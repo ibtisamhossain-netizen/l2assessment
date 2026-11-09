@@ -152,6 +152,26 @@ All three areas, with the biggest focus on #1 because routing depends on it:
 ### Tests
 `npm test` runs `tests/triage.test.mjs` (Node's built-in test runner, no API key needed): 15 tests covering every sample message, new examples (double charge, hacked account, can't log in, slow page, invoice question, dark mode request, "download" vs "down"), templates, escalation and LLM JSON parsing.
 
+## Week 8 change: risk signals
+
+Testing 16 new messages showed that some messages that can cost Relay AI a customer, money or trust still came out Low or Medium, because they don't sound like a technical outage:
+
+| Message | Before | After |
+|---|---|---|
+| "Someone in my team can see other customers' messages in the inbox." | Low | **High**, data exposure |
+| "If this isn't fixed by Friday we're cancelling and moving to a competitor." | Low | **High**, churn risk |
+| "I'm going to report you to my bank and file a chargeback." | Low | **High**, chargeback or legal threat |
+| "Please delete all my personal data under GDPR." | Low | **High**, privacy request |
+| "I want to cancel my subscription." | Medium | **High**, churn risk |
+
+What changed:
+- `detectRisks()` in `src/utils/triageRules.js` finds four risks: data exposure, churn risk, chargeback or legal threat, and privacy request. A risk makes the message High urgency.
+- A risk escalates the message whatever its category (`shouldEscalate` in `src/utils/templates.js`), because a churn threat inside a billing question is still a churn threat.
+- `getRiskActions()` names an owner and a first action for each risk. The Analyze page shows them under the escalation banner, and Copy Results includes them. The category action still shows, so the billing fix isn't lost.
+- 9 new tests, including messages that share words but are not risks ("Can I see other users in my team?", "cancel a meeting invite"). `npm test` runs 24 tests.
+
+Not covered: negation ("this is not urgent" still comes out High), non-English messages, and silent failures like "our webhook stopped firing". These rules only cover the keyword path; the Groq path was not tested this week because no API key was set.
+
 ### Still to do
 - Move the Groq call to a small server/API route so the API key is never shipped to the browser (`dangerouslyAllowBrowser` is only acceptable for local development).
 - Track agent overrides of category/urgency to measure accuracy over time.

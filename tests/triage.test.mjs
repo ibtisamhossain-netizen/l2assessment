@@ -5,10 +5,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
-  assessUrgency, categorizeByKeywords, parseLLMResponse, normalizeCategory, validateMessage,
+  assessUrgency, categorizeByKeywords, detectRisks, parseLLMResponse, normalizeCategory, validateMessage,
 } from '../src/utils/triageRules.js'
 import { calculateUrgency } from '../src/utils/urgencyScorer.js'
-import { getRecommendedAction, shouldEscalate } from '../src/utils/templates.js'
+import { getRecommendedAction, getRiskActions, shouldEscalate } from '../src/utils/templates.js'
 
 const samples = JSON.parse(readFileSync(new URL('../sample-messages.json', import.meta.url))).testMessages
 const byId = id => samples.find(s => s.id === id).message
@@ -88,3 +88,46 @@ test('LLM JSON parsing and category normalization', () => {
   assert.equal(parseLLMResponse('{"category":"Spam"}'), null)
   assert.equal(normalizeCategory('feature request'), 'Feature Request')
 })
+
+// Week 8: risk signals. Each of these came out Low or Medium before.
+const risky = [
+  ['Someone in my team can see other customers\' messages in the inbox.', 'data exposure'],
+  ['I opened an invoice that belongs to another company.', 'data exposure'],
+  ['If this isn\'t fixed by Friday we\'re cancelling and moving to a competitor.', 'churn risk'],
+  ['I want to cancel my subscription.', 'churn risk'],
+  ['I\'m going to report you to my bank and file a chargeback.', 'chargeback or legal threat'],
+  ['You charged us twice and our lawyer will be in touch.', 'chargeback or legal threat'],
+  ['Please delete all my personal data under GDPR.', 'privacy request'],
+]
+
+for (const [msg, risk] of risky) {
+  test(`risk: ${risk} -> High, escalated, owner named (${msg.slice(0, 30)}...)`, () => {
+    const risks = detectRisks(msg)
+    assert.ok(risks.includes(risk), `expected ${risk}, got ${risks}`)
+    const { category } = categorizeByKeywords(msg)
+    const { level, reasons } = assessUrgency(msg, category)
+    assert.equal(level, 'High')
+    assert.ok(reasons.includes(risk))
+    assert.equal(shouldEscalate(category, level, risks), true)
+    assert.ok(getRiskActions(risks).every(a => a.owner && a.action))
+  })
+}
+
+test('risk: ordinary messages that share words are not flagged', () => {
+  for (const msg of [
+    'Can I see other users in my team on the dashboard?',
+    'How do I cancel a meeting invite I sent from the app?',
+    'Is there a way to dispute nothing? Just kidding, how do I export data?',
+    'Where can I read your privacy policy?',
+    'My invoice total looks wrong this month',
+  ]) {
+    assert.deepEqual(detectRisks(msg), [], msg)
+  }
+})
+
+test('risk: escalation still needs High urgency when there is no risk', () => {
+  assert.equal(shouldEscalate('General Inquiry', 'High', []), false)
+  assert.equal(shouldEscalate('General Inquiry', 'Low', ['churn risk']), true)
+  assert.deepEqual(getRiskActions(['not a risk']), [])
+})
+

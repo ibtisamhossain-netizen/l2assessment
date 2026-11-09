@@ -50,12 +50,38 @@ const LOW_SIGNALS = [
   [/\b(feature|would be (great|nice|useful)|could you add|please add|suggestion|would love|wish|enhancement)\b/i, 'feature request'],
 ]
 
+/**
+ * Risk signals: messages that can cost Relay AI a customer, money or trust no
+ * matter which category they land in. Each one makes the message High urgency,
+ * escalates it, and names who should own it (see templates.js for the actions).
+ */
+const DATA_WORDS = String.raw`(data|messages?|info(rmation)?|details|invoices?|emails?|tickets?|records?|accounts?|conversations?|files?)`
+const RISK_SIGNALS = [
+  [new RegExp(String.raw`\b(someone else'?s|another (customer|user|company|person)'?s|other (customers|users|companies|people)'?s?|(the )?wrong (customer|user|account|company)'?s?)\b.{0,30}\b${DATA_WORDS}\b`, 'i'), 'data exposure'],
+  [new RegExp(String.raw`\b${DATA_WORDS}\b.{0,30}\b(belong(s|ing)? to|from) (someone else|another (customer|user|company)|other (customers|users|companies))\b`, 'i'), 'data exposure'],
+  [/\b(cancel(l?ing)?|leav(e|ing)|switch(ing)?|mov(e|ing))\b.{0,40}\b(competitor|another (provider|vendor|tool|platform|service)|elsewhere|somewhere else)\b/i, 'churn risk'],
+  [/\b(cancel(l?ing)?|close|closing|end(ing)?)\b.{0,10}\b(my|our|the)\b.{0,10}\b(account|subscription|plan|contract)\b/i, 'churn risk'],
+  [/\b(charge ?backs?|dispute (the|this|a) charge|report (you|this|it) to (my|our|the) bank|lawyers?|attorney|legal action|lawsuit|sue you|small claims|better business bureau)\b/i, 'chargeback or legal threat'],
+  [/\b(gdpr|ccpa|right to be forgotten|data (deletion|access|subject) request|delete (all )?(of )?(my|our) (personal )?(data|information|account))\b/i, 'privacy request'],
+]
+
 function matchSignals(message, signals) {
   const labels = []
   for (const [regex, label] of signals) {
     if (regex.test(message) && !labels.includes(label)) labels.push(label)
   }
   return labels
+}
+
+/**
+ * Returns the risk labels found in a message, e.g. ['churn risk'].
+ * A risk is reported whatever the message's category.
+ *
+ * @param {string} message
+ * @returns {string[]}
+ */
+export function detectRisks(message) {
+  return matchSignals((message || '').trim(), RISK_SIGNALS)
 }
 
 /**
@@ -72,7 +98,7 @@ export function assessUrgency(message, category) {
   const text = (message || '').trim()
   if (!text) return { level: 'Low', reasons: ['empty message'] }
 
-  const critical = matchSignals(text, CRITICAL_SIGNALS)
+  const critical = [...detectRisks(text), ...matchSignals(text, CRITICAL_SIGNALS)]
   if (critical.length) return { level: 'High', reasons: critical }
 
   const high = matchSignals(text, HIGH_SIGNALS)

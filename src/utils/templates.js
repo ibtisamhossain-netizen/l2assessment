@@ -57,14 +57,51 @@ export function getAvailableCategories() {
 }
 
 /**
+ * Who owns each risk and what they should do first. These run alongside the
+ * category action, because a churn threat inside a billing question still
+ * needs the billing fix as well.
+ */
+const riskActions = {
+  'data exposure': {
+    owner: 'Security on-call',
+    action: 'Treat it as a possible data leak: page security on-call now, keep the ticket private, and do not ask the customer to forward what they can see.',
+  },
+  'churn risk': {
+    owner: 'Customer success',
+    action: 'Bring in the account owner today, before the reply goes out, so the customer hears from someone who can fix the cause or offer options.',
+  },
+  'chargeback or legal threat': {
+    owner: 'Billing lead',
+    action: 'Send to the billing lead before replying. Stick to facts about the charge and do not argue or make promises in writing.',
+  },
+  'privacy request': {
+    owner: 'Privacy / compliance',
+    action: 'Forward to the privacy contact and log the request date: data requests have a legal response deadline.',
+  },
+}
+
+/**
+ * The owner and first action for each risk found in a message.
+ *
+ * @param {string[]} risks - Labels from detectRisks()
+ * @returns {{risk: string, owner: string, action: string}[]}
+ */
+export function getRiskActions(risks = []) {
+  return risks.filter(r => riskActions[r]).map(r => ({ risk: r, ...riskActions[r] }))
+}
+
+/**
  * Determines if message should be escalated to a human lead right away.
  * Previously this returned true for any message over 100 characters.
+ * Any risk signal escalates, whatever the category.
  *
  * @param {string} category - The message category
  * @param {string} urgency - The urgency level
+ * @param {string[]} [risks] - Labels from detectRisks()
  * @returns {boolean} - Whether to escalate
  */
-export function shouldEscalate(category, urgency) {
+export function shouldEscalate(category, urgency, risks = []) {
+  if (risks.length) return true
   if (urgency !== 'High') return false
   return category === 'Technical Problem' || category === 'Billing Issue' || category === 'Unknown'
 }
